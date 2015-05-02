@@ -1,6 +1,7 @@
 var os = require("os");
 var _ = require("lodash");
 var dockerode = require("dockerode");
+var retry = require("./util/retry.js");
 
 var argv = require("yargs")
         .demand("consulHost")
@@ -50,11 +51,21 @@ function registerService (service, done) {
         port: service.port
     };
     console.log("registering", obj.id);
-    consul.agent.service.register(obj, function (err) {
-        if (err) {
+    retry.retryWithThrottling(function (retry) {
+        consul.agent.service.register(obj, function (err) {
+            if (err) {
+                retry(err);
+            } else {
+                console.log("registered", obj.id);
+                done();
+            }
+        });
+    }, {
+        maxAttempts: 5,
+        failProc: function (err) {
             console.log(err);
+            done();
         }
-        done();
     });
 }
 
@@ -81,10 +92,20 @@ function unregisterService (service, done) {
         id: serviceId(service)
     };
     console.log("unregistering", obj.id);
-    consul.agent.service.deregister(obj, function (err) {
-        if (err) {
+    retry.retryWithThrottling(function (retry) {
+        consul.agent.service.deregister(obj, function (err) {
+            if (err) {
+                retry(err);
+            } else {
+                console.log("unregistered", obj.id);
+                done();
+            }
+        });
+    }, {
+        maxAttempts: 5,
+        failProc: function (err) {
             console.log(err);
+            done();
         }
-        done();
     });
 }

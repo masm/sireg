@@ -11,7 +11,14 @@ specific use case.
 
 You should consider not using this and use `registrator` instead, if it works for you.
 
+## Install
+
+Pull this image with `docker pull masm/sireg`.
+
+
 ## Usage
+
+Run it with `docker run masm/sireg`.
 
 Although this is very similar to registrator, there are some small differences:
 
@@ -30,4 +37,4 @@ Although this is very similar to registrator, there are some small differences:
 
 ## License
 
-Copyright (c) 2015 Marco Monteiro. Released under the MIT license. See `LICENSE` file for details.
+Copyright (c) 2016 Marco Monteiro. Released under the MIT license. See `LICENSE` file for details.

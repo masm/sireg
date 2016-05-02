@@ -72,7 +72,7 @@ function registerService (service, done) {
 function serviceId (service) {
     return [
         "registrator",
-        os.hostname(),
+        // os.hostname(),
         service.properties.name,
         service.properties.descriminator
     ].filter(_.identity).join(":");

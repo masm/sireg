@@ -1,5 +1,5 @@
 var events = require("events");
-var jsonStream = require("../util/event-stream-parser.js");
+var jsonStream = require("../helpers/event-stream-parser.js");
 
 module.exports = exported;
 

@@ -1,111 +1,74 @@
-var os = require("os");
-var _ = require("lodash");
-var dockerode = require("dockerode");
-var retry = require("./util/retry.js");
-
 var argv = require("yargs")
-        .demand("consulHost")
-        .default("consulPort", 8500)
+        .default("consulHost", null)
+        .default("consulPort", null)
         .argv;
 
-var consul = require("consul")({
-    host: argv.consulHost,
-    port: argv.consulPort
-});
+if (argv.consulHost) {
+    process.env["CONSUL_HOST"] = argv.consulHost;
+}
 
-var containerData = {};
+if (argv.consulPort) {
+    process.env["CONSUL_PORT"] = argv.consulPort;
+}
+
+var os = require("os");
+var dockerode = require("dockerode");
+var serviceEvents = require("./service-events.js");
+var configLookup = require("./helpers/config.js");
+var workQueue = require("./helpers/work-queue.js");
+
+var consulHost = configLookup("CONSUL_HOST");
+var consulPort = process.env["CONSUL_PORT"] || 8500;
+var consul = require("consul")({host: consulHost, port: consulPort});
+
+var consulService = require("./consul/service.js")(consul);
 
 var docker = dockerode({socketPath: '/var/run/docker.sock'});
-
-var workQueue = require("./work-queue.js")();
 
 main();
 
 function main () {
-    var events = require("./service-events.js")(docker);
+    var events = serviceEvents(docker, consulService);
+    var queue = workQueue();
 
     events.on("start", function (service) {
-        workQueue.push(function (done) {
+        queue.push(function (done) {
             registerService(service, done);
         });
     });
 
     events.on("stop", function (service) {
-        workQueue.push(function (done) {
+        queue.push(function (done) {
             unregisterService(service, done);
         });
     });
 
     events.on("theEnd", function () {
-        console.log("Not more events from docker. Exiting...");
+        console.warn("No more events from docker. Exiting...");
         process.exit(1);
     });
 }
 
-function registerService (service, done) {
-    var obj = {
-        name: service.properties.name,
-        id:   serviceId(service),
-        tags: serviceTags(service),
-        address: service.ip,
-        port: service.port
-    };
-    console.log("registering", obj.id);
-    retry.retryWithThrottling(function (retry) {
-        consul.agent.service.register(obj, function (err) {
-            if (err) {
-                retry(err);
-            } else {
-                console.log("registered", obj.id);
-                done();
-            }
-        });
-    }, {
-        maxAttempts: 5,
-        failProc: function (err) {
-            console.log(err);
-            done();
+function registerService (data, done) {
+    console.log("registering", data.id);
+    consulService.register(data, function (err) {
+        if (err) {
+            console.warn(err);
+        } else {
+            console.log("registered", data.id);
         }
+        done();
     });
 }
 
-function serviceId (service) {
-    return [
-        "registrator",
-        // os.hostname(),
-        service.properties.name,
-        service.properties.descriminator
-    ].filter(_.identity).join(":");
-}
-
-function serviceTags (service) {
-    var tags = (service.properties.tags || "").split(",").filter(_.identity);
-
-    if (service.properties.descriminator) {
-        tags.push(service.properties.descriminator);
-    }
-    return tags;
-}
-
-function unregisterService (service, done) {
-    var obj = {
-        id: serviceId(service)
-    };
-    console.log("unregistering", obj.id);
-    retry.retryWithThrottling(function (retry) {
-        consul.agent.service.deregister(obj, function (err) {
-            if (err) {
-                retry(err);
-            } else {
-                console.log("unregistered", obj.id);
-                done();
-            }
-        });
-    }, {
-        maxAttempts: 5,
-        failProc: function (err) {
-            console.log(err);
-            done();
+function unregisterService (data, done) {
+    console.log("unregistering", data.id);
+    consulService.unregister(data, function (err) {
+        if (err) {
+            console.warn(err);
+        } else {
+            console.log("unregistered", data.id);
         }
+        done();
     });
 }

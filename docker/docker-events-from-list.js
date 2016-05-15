@@ -2,7 +2,6 @@ var events = require("events");
 
 module.exports = exported;
 
-
 function exported (docker, interval) {
     var eventEmitter = new events.EventEmitter();
 

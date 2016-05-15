@@ -1,89 +1,65 @@
 var _ = require("lodash");
-var events = require("events");
+var dockerServiceEvents = require("./docker-service-events.js");
+var eventEmitterDecorator = require("./helpers/event-emitter-decorator.js");
+var consulDockerDataTranslation = require("./consul-docker-data-translation.js")();
 
 module.exports = exported;
 
-function exported (docker) {
-    var eventEmitter = new events.EventEmitter();
-    var inspectContainer = require("./docker/docker-inspector.js")(docker);
+function exported (docker, consulService) {
+    const serviceEvents = dockerServiceEvents(docker);
 
-    setup();
+    const knownServices = {};
 
-    return eventEmitter;
+    return eventEmitter();
 
-    function setup () {
-        var dockerEvents = require("./docker/docker-events.js")(docker);
-
-        dockerEvents.on("start", processStart);
-        dockerEvents.on("die", processDie);
-        dockerEvents.on("theEnd", function () {
-            eventEmitter.emit("theEnd");
+    function eventEmitter () {
+        var eventEmitter = eventEmitterDecorator(serviceEvents, {
+            start: (service, next) => {
+                var data = consulDockerDataTranslation.serviceRegistryObject(service);
+                noteStarted(data.id);
+                next(data);
+            },
+            stop: (service, next) => {
+                var data = {id: consulDockerDataTranslation.serviceId(service)};
+                noteStopped(data.id);
+                next(data);
+            },
+            theEnd: (data, next) => next(data),
         });
 
-        var bootEvents = require("./docker/docker-events-from-list")(docker);
+        setTimeout(() => {
+            setInterval(() => sync(eventEmitter), 300000);
+            sync(eventEmitter);
+        }, 5000);
 
-        bootEvents.on("running", processStart);
-
+        return eventEmitter;
     }
 
-    function processStart (event) {
-        inspectContainer(event.id, function (err, data) {
-            if (err) {
-                // ignore
-            } else {
-                var services = parseEnv(data.Config.Env);
-                if (services) {
-                    services.forEach(function (service) {
-                        service.ip = data.NetworkSettings.IPAddress;
-                        eventEmitter.emit("start", service);
-                    });
+    function sync (eventEmitter) {
+        registeredNames((ids) => {
+            ids.forEach((id) => {
+                if (!knownServices[id]) {
+                    eventEmitter.emit("stop", {id});
                 }
-            }
+            });
         });
-    }
 
-    function processDie (event) {
-        inspectContainer(event.id, function (err, data) {
-            if (err && !data) {
-                // ignore
-            } else {
-                var services = parseEnv(data.Config.Env);
-                if (services) {
-                    services.forEach(function (service) {
-                        eventEmitter.emit("stop", service);
-                    });
+        function registeredNames (done) {
+            consulService.registered((err, result) => {
+                if (err) {
+                    done([]);
+                } else {
+                    done(Object.keys(result).filter(function (key) { return /^registrator:/.test(key); }));
                 }
-            }
-        });
+            });
+        }
     }
-}
 
-function parseEnv (strings) {
-    var obj = strings.map(function (string) {
-        var m = string.match(/^SERVICE_(\d+)\_([^=]*)=(.*)/);
-        return m && {
-            port: m[1],
-            name: m[2],
-            value: m[3]
-        };
-    }).reduce(function (acc, v) {
-        if (v) {
-            if (!acc[v.port]) {
-                acc[v.port] = {};
-            }
-            acc[v.port][v.name.toLowerCase()] = v.value;
-        }
-        return acc;
-    }, {});
-    var array = Object.keys(obj).map(function (key) {
-        if (obj[key].name) {
-            return {
-                port: parseInt(key, 10),
-                properties: obj[key]
-            };
-        } else {
-            return false;
-        }
-    }).filter(_.identity);
-    return array.length === 0 ? null : array;
+    function noteStarted (id) {
+        knownServices[id] = true;
+    }
+
+    function noteStopped (id) {
+        delete knownServices[id];
+    }
 }
